@@ -3,8 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "devDependencies": {
+    "shx": "^0.4.0",
+    "typescript": "^5.8.3"
+  },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.app.json && cp index.html dist/index.html && cp -R public dist/public && cp src/styles.css dist/styles.css",
+    "build": "shx rm -rf dist && tsc -p tsconfig.app.json && shx cp index.html dist/index.html && shx cp -R public dist/public && shx cp src/styles.css dist/styles.css",
     "dev": "npm run build && python3 -m http.server 4173 -d dist",
     "test": "npm run build && node --test test/*.test.mjs"
   }
