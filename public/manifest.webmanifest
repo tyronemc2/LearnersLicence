@@ -1,0 +1,10 @@
+{
+  "name": "SA Learner's Licence Practice",
+  "short_name": "SA Learner Practice",
+  "description": "Practice and preparation for the South African learner's licence theory test.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f766e",
+  "icons": []
+}
