@@ -18,6 +18,27 @@ npm run test
 npm run build
 ```
 
+## Deploying (e.g. ll.scanme.site)
+
+This project uses **nginx**, not Apache — `.htaccess` has no effect. Built files live in `dist/` (gitignored). After each deploy:
+
+```bash
+cd /data/www/ll.scanme.site
+npm ci
+npm run build
+```
+
+Point nginx `root` at the build output (simplest):
+
+```nginx
+root /data/www/ll.scanme.site/dist;
+index index.html;
+```
+
+See `deploy/nginx.conf.example` for a full server block. If `root` stays on the repo checkout, use `try_files /dist$uri /dist$uri/ /dist/index.html;` instead.
+
+If assets still 404, confirm `dist/main.js` and `dist/styles.css` exist and reload nginx after config changes (`nginx -t && systemctl reload nginx`).
+
 ## Product guardrails
 
 - This is a practice platform only. It does not issue, book, invigilate, certify, or replace the official learner's licence process at a driving licence testing centre.
