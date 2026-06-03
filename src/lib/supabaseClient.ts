@@ -18,22 +18,19 @@ type InvokeOptions = {
   token?: string;
 };
 
-declare global {
-  interface Window {
-    __SUPABASE_CONFIG__?: RuntimeSupabaseConfig;
-  }
-}
-
+const SUPABASE_URL = 'https://YOUR_PROJECT_REF.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 const SESSION_STORAGE_KEY = 'learners.supabase.session';
 
 function getConfig(): RuntimeSupabaseConfig | null {
-  const config = window.__SUPABASE_CONFIG__;
-
-  if (!config?.url || !config?.anonKey || config.url.includes('YOUR_PROJECT_REF')) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes('YOUR_PROJECT_REF')) {
     return null;
   }
 
-  return config;
+  return {
+    url: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY
+  };
 }
 
 function getStoredSession(): SupabaseSession | null {
@@ -60,7 +57,7 @@ function storeSession(session: SupabaseSession | null) {
 async function supabaseFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const config = getConfig();
   if (!config) {
-    throw new Error('Supabase is not configured. Update public/config.js with your project URL and anon key.');
+    throw new Error('Supabase is not configured. Update src/lib/supabaseClient.ts with your project URL and anon key.');
   }
 
   const response = await fetch(`${config.url}${path}`, {
@@ -138,7 +135,7 @@ export const supabaseRuntime = {
     const accessToken = token ?? this.getAccessToken();
 
     if (!config) {
-      throw new Error('Supabase is not configured. Update public/config.js with your project URL and anon key.');
+      throw new Error('Supabase is not configured. Update src/lib/supabaseClient.ts with your project URL and anon key.');
     }
 
     if (!accessToken) {
