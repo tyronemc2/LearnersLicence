@@ -5,6 +5,7 @@ export interface SupabaseSession {
   user?: {
     id: string;
     email?: string;
+    phone?: string;
   };
 }
 
@@ -89,6 +90,73 @@ function storeSession(session: SupabaseSession | null) {
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
+export function normalizeSouthAfricanPhone(input: string) {
+  const digits = input.replace(/\D/g, '');
+
+  if (digits.startsWith('27') && digits.length === 11) {
+    return `+${digits}`;
+  }
+
+  if (digits.startsWith('0') && digits.length === 10) {
+    return `+27${digits.slice(1)}`;
+  }
+
+  if (digits.length === 9) {
+    return `+27${digits}`;
+  }
+
+  throw new Error('Enter a valid South African mobile number, e.g. 082 123 4567.');
+}
+
+export function formatPhoneForDisplay(phone: string) {
+  const normalized = phone.startsWith('+') ? phone : normalizeSouthAfricanPhone(phone);
+  const digits = normalized.replace(/\D/g, '');
+
+  if (digits.length !== 11 || !digits.startsWith('27')) {
+    return phone;
+  }
+
+  return `0${digits.slice(2, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+}
+
+function formatAuthError(payload: Record<string, unknown>, fallback: string) {
+  const errorCode = String(payload.error_code ?? payload.code ?? '').toLowerCase();
+  const message = String(
+    payload.msg
+    ?? payload.message
+    ?? payload.error_description
+    ?? payload.error
+    ?? fallback
+  );
+  const lowerMessage = message.toLowerCase();
+
+  if (errorCode === 'otp_expired' || lowerMessage.includes('otp has expired')) {
+    return 'That code has expired. Request a new SMS code and try again.';
+  }
+
+  if (errorCode === 'otp_disabled' || lowerMessage.includes('otp disabled')) {
+    return 'Phone sign-in is not enabled in Supabase yet. Enable Phone auth and configure an SMS provider.';
+  }
+
+  if (
+    errorCode === 'invalid_otp'
+    || lowerMessage.includes('invalid otp')
+    || lowerMessage.includes('token has expired or is invalid')
+  ) {
+    return 'That code is incorrect. Check the SMS and try again.';
+  }
+
+  if (lowerMessage.includes('invalid phone')) {
+    return 'Enter a valid mobile number in South African format, e.g. 082 123 4567.';
+  }
+
+  if (lowerMessage.includes('sms send failed') || lowerMessage.includes('phone provider')) {
+    return 'Could not send the SMS. Check your Supabase phone/SMS provider settings.';
+  }
+
+  return message;
+}
+
 async function supabaseFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const config = getConfig();
   if (!config) {
@@ -104,11 +172,10 @@ async function supabaseFetch<T>(path: string, options: RequestInit = {}): Promis
     }
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
 
   if (!response.ok) {
-    const message = payload?.msg || payload?.message || payload?.error_description || payload?.error || 'Supabase request failed';
-    throw new Error(message);
+    throw new Error(formatAuthError(payload, 'Supabase request failed'));
   }
 
   return payload as T;
@@ -127,30 +194,40 @@ export const supabaseRuntime = {
     return getStoredSession()?.access_token;
   },
 
-  async signUp(email: string, password: string) {
-    const session = await supabaseFetch<SupabaseSession>('/auth/v1/signup', {
+  async sendPhoneOtp(phone: string) {
+    const normalizedPhone = normalizeSouthAfricanPhone(phone);
+
+    await supabaseFetch('/auth/v1/otp', {
       method: 'POST',
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({
+        phone: normalizedPhone,
+        create_user: true
+      })
     });
 
-    if (session.access_token) {
-      storeSession(session);
-    }
-
-    return session;
+    return normalizedPhone;
   },
 
-  async signIn(email: string, password: string) {
-    const session = await supabaseFetch<SupabaseSession>('/auth/v1/token?grant_type=password', {
+  async verifyPhoneOtp(phone: string, token: string) {
+    const normalizedPhone = normalizeSouthAfricanPhone(phone);
+    const session = await supabaseFetch<SupabaseSession>('/auth/v1/verify', {
       method: 'POST',
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({
+        type: 'sms',
+        phone: normalizedPhone,
+        token: token.trim()
+      })
     });
 
     if (!session.access_token) {
-      throw new Error('Sign in failed. Check your email and password.');
+      throw new Error('Sign in failed. Check the SMS code and try again.');
     }
 
-    storeSession(session);
+    storeSession({
+      ...session,
+      user: session.user ?? { phone: normalizedPhone }
+    });
+
     return session;
   },
 

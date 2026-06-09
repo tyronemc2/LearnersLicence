@@ -83,6 +83,27 @@ npm run seed
 
 This inserts questions for all eight licence families (A1, A, B, EB, C1, C, EC1, EC). The script refuses to run if the `questions` table already has rows.
 
+### Phone sign-in (SMS OTP)
+
+The app signs users in with a **South African mobile number** and a one-time SMS code via Supabase Auth.
+
+#### 1. Enable phone auth in Supabase
+
+1. Open [Supabase Dashboard](https://app.supabase.com) → your project → **Authentication** → **Providers**
+2. Enable **Phone**
+3. Configure an SMS provider (Twilio is the most common):
+   - **Authentication** → **Providers** → **Phone** → Twilio
+   - Add your Twilio Account SID, Auth Token, and Message Service SID or From number
+4. Save
+
+See [Supabase phone login docs](https://supabase.com/docs/guides/auth/phone-login).
+
+#### 2. Test numbers
+
+For development, Twilio trial accounts can send SMS only to verified numbers. Add your test mobile in the Twilio console first.
+
+Users enter numbers like `082 123 4567` — the app normalizes them to E.164 format (`+27821234567`) before calling Supabase.
+
 ### 3. Reseeding from scratch
 
 If you need to start over, run this in the Supabase SQL editor:

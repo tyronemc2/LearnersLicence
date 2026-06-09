@@ -8,6 +8,7 @@ import {
 } from './domain/licence.js';
 import {
   ExamQuestion,
+  formatPhoneForDisplay,
   StartFullMockResponse,
   SubmitAttemptResponse,
   supabaseRuntime
@@ -56,7 +57,7 @@ const sampleQuestions = [
 ];
 
 type AppView = 'home' | 'exam';
-type AuthMode = 'signin' | 'signup';
+type AuthStep = 'phone' | 'otp';
 
 let selectedFamily: DrivingCodeFamily = 'B';
 let currentQuestionIndex = 0;
@@ -65,12 +66,16 @@ const flaggedQuestionIds = new Set<string>();
 let statusMessage = 'Choose a code family, then start a full mock or weak-area drill.';
 let appView: AppView = 'home';
 let showAuthModal = false;
-let authMode: AuthMode = 'signin';
+let authStep: AuthStep = 'phone';
 let isLoading = false;
 let activeAttempt: StartFullMockResponse | null = null;
 let examQuestions: ExamQuestion[] = [];
 let submitResult: SubmitAttemptResponse | null = null;
 let examEndsAt: number | null = null;
+let authErrorMessage = '';
+let authFormPhone = '';
+let authFormOtp = '';
+let pendingAuthPhone = '';
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (char) => ({
@@ -82,8 +87,9 @@ function escapeHtml(value: string) {
   })[char] ?? char);
 }
 
-function getSignedInEmail() {
-  return supabaseRuntime.getSession()?.user?.email ?? null;
+function getSignedInPhone() {
+  const phone = supabaseRuntime.getSession()?.user?.phone;
+  return phone ? formatPhoneForDisplay(phone) : null;
 }
 
 function formatRemainingTime() {
@@ -156,7 +162,7 @@ function renderDashboard() {
     </article>
   `).join('');
 
-  const signedInEmail = getSignedInEmail();
+  const signedInPhone = getSignedInPhone();
 
   return `
     <section class="panel dashboard" aria-labelledby="dashboard-title">
@@ -165,14 +171,14 @@ function renderDashboard() {
         <h2 id="dashboard-title">Readiness dashboard</h2>
         <p>Your overall readiness is the lowest of the three section readiness scores, matching the official-style sectional pass condition.</p>
       </div>
-      ${signedInEmail ? `
+      ${signedInPhone ? `
         <p class="signed-in" aria-live="polite">
-          Signed in as <strong>${escapeHtml(signedInEmail)}</strong>
+          Signed in as <strong>${escapeHtml(signedInPhone)}</strong>
           <button type="button" class="link-button" data-sign-out>Sign out</button>
         </p>
       ` : `
         <p class="signed-out">
-          Sign in to save your full mock attempts and track progress.
+          Sign in with your mobile number to save full mock attempts and track progress.
           <button type="button" class="link-button" data-open-auth>Sign in</button>
         </p>
       `}
@@ -353,8 +359,11 @@ function renderSampleRunner() {
 
 function openAuthModal() {
   showAuthModal = true;
-  authMode = 'signin';
-  statusMessage = 'Sign in to start your full mock exam.';
+  authStep = 'phone';
+  authErrorMessage = '';
+  authFormOtp = '';
+  pendingAuthPhone = '';
+  statusMessage = 'Sign in with your mobile number to start your full mock exam.';
   render();
 }
 
@@ -371,30 +380,61 @@ function renderAuthModalLayer() {
     return;
   }
 
+  const phoneStep = authStep === 'phone';
+  const displayPhone = pendingAuthPhone ? formatPhoneForDisplay(pendingAuthPhone) : '';
+
   modalRoot.innerHTML = `
     <div class="modal-backdrop" data-close-auth>
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
         <button type="button" class="modal-close" aria-label="Close sign-in dialog">×</button>
         <p class="eyebrow">Full mock exam</p>
-        <h2 id="auth-title">${authMode === 'signin' ? 'Sign in to continue' : 'Create an account'}</h2>
-        <p>Sign in with your Supabase account to start a timed 68-question full mock for code family ${selectedFamily}.</p>
-        <div class="auth-tabs" role="tablist" aria-label="Authentication mode">
-          <button type="button" class="${authMode === 'signin' ? 'selected' : ''}" data-auth-mode="signin">Sign in</button>
-          <button type="button" class="${authMode === 'signup' ? 'selected' : ''}" data-auth-mode="signup">Sign up</button>
-        </div>
-        <form class="auth-form" data-auth-form>
-          <label>
-            Email
-            <input type="email" name="email" autocomplete="email" required />
-          </label>
-          <label>
-            Password
-            <input type="password" name="password" autocomplete="${authMode === 'signup' ? 'new-password' : 'current-password'}" minlength="6" required />
-          </label>
-          <button type="submit" ${isLoading ? 'disabled' : ''}>
-            ${isLoading ? 'Please wait…' : authMode === 'signin' ? 'Sign in and start mock' : 'Create account and start mock'}
-          </button>
-        </form>
+        <h2 id="auth-title">${phoneStep ? 'Sign in with your mobile' : 'Enter SMS code'}</h2>
+        <p>${phoneStep
+    ? `We'll send a one-time code to your mobile number to start the timed 68-question mock for code family ${selectedFamily}.`
+    : `Enter the 6-digit code sent to ${escapeHtml(displayPhone)}.`}</p>
+        ${authErrorMessage ? `<p class="auth-error" role="alert">${escapeHtml(authErrorMessage)}</p>` : ''}
+        ${phoneStep ? `
+          <form class="auth-form" data-phone-form>
+            <label>
+              Mobile number
+              <input
+                type="tel"
+                name="phone"
+                inputmode="tel"
+                autocomplete="tel"
+                placeholder="082 123 4567"
+                value="${escapeHtml(authFormPhone)}"
+                required
+              />
+            </label>
+            <button type="submit" ${isLoading ? 'disabled' : ''}>
+              ${isLoading ? 'Sending code…' : 'Send SMS code'}
+            </button>
+          </form>
+        ` : `
+          <form class="auth-form" data-otp-form>
+            <label>
+              SMS code
+              <input
+                type="text"
+                name="otp"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                pattern="[0-9]{6}"
+                maxlength="6"
+                placeholder="123456"
+                value="${escapeHtml(authFormOtp)}"
+                required
+              />
+            </label>
+            <button type="submit" ${isLoading ? 'disabled' : ''}>
+              ${isLoading ? 'Verifying…' : 'Verify and start mock'}
+            </button>
+            <button type="button" class="link-button auth-back" data-change-phone ${isLoading ? 'disabled' : ''}>
+              Use a different number
+            </button>
+          </form>
+        `}
       </section>
     </div>
   `;
@@ -472,8 +512,7 @@ async function startFullMock() {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Could not start full mock.';
     if (message.toLowerCase().includes('not authenticated') || message.toLowerCase().includes('sign in')) {
-      showAuthModal = true;
-      authMode = 'signin';
+      openAuthModal();
       statusMessage = 'Your session expired. Sign in again to start the full mock.';
     } else {
       statusMessage = message;
@@ -484,40 +523,68 @@ async function startFullMock() {
   }
 }
 
-async function handleAuthSubmit(form: HTMLFormElement) {
-  const email = (form.elements.namedItem('email') as HTMLInputElement).value.trim();
-  const password = (form.elements.namedItem('password') as HTMLInputElement).value;
+async function handleSendPhoneOtp(form: HTMLFormElement) {
+  const phone = (form.elements.namedItem('phone') as HTMLInputElement).value.trim();
+  authFormPhone = phone;
 
-  if (!email || !password) {
-    statusMessage = 'Enter your email and password to continue.';
+  if (!phone) {
+    authErrorMessage = 'Enter your mobile number to continue.';
     render();
     return;
   }
 
   isLoading = true;
-  statusMessage = authMode === 'signin' ? 'Signing in…' : 'Creating your account…';
+  authErrorMessage = '';
+  statusMessage = 'Sending SMS code…';
   render();
 
   try {
-    if (authMode === 'signup') {
-      const session = await supabaseRuntime.signUp(email, password);
-      if (!session.access_token) {
-        statusMessage = 'Account created. Check your email to confirm, then sign in.';
-        authMode = 'signin';
-        isLoading = false;
-        render();
-        return;
-      }
-    } else {
-      await supabaseRuntime.signIn(email, password);
-    }
+    pendingAuthPhone = await supabaseRuntime.sendPhoneOtp(phone);
+    authStep = 'otp';
+    authFormOtp = '';
+    statusMessage = `SMS code sent to ${formatPhoneForDisplay(pendingAuthPhone)}.`;
+  } catch (error) {
+    authErrorMessage = error instanceof Error ? error.message : 'Could not send SMS code.';
+    statusMessage = authErrorMessage;
+  } finally {
+    isLoading = false;
+    render();
+  }
+}
 
+async function handleVerifyPhoneOtp(form: HTMLFormElement) {
+  const otp = (form.elements.namedItem('otp') as HTMLInputElement).value.trim();
+  authFormOtp = otp;
+
+  if (!pendingAuthPhone) {
+    authStep = 'phone';
+    authErrorMessage = 'Enter your mobile number again to receive a new code.';
+    render();
+    return;
+  }
+
+  if (!otp) {
+    authErrorMessage = 'Enter the 6-digit SMS code.';
+    render();
+    return;
+  }
+
+  isLoading = true;
+  authErrorMessage = '';
+  statusMessage = 'Verifying SMS code…';
+  render();
+
+  try {
+    await supabaseRuntime.verifyPhoneOtp(pendingAuthPhone, otp);
     showAuthModal = false;
+    authErrorMessage = '';
+    authFormOtp = '';
     isLoading = false;
     await startFullMock();
   } catch (error) {
     isLoading = false;
-    statusMessage = error instanceof Error ? error.message : 'Authentication failed.';
+    authErrorMessage = error instanceof Error ? error.message : 'Authentication failed.';
+    statusMessage = authErrorMessage;
     render();
   }
 }
@@ -559,11 +626,22 @@ async function submitExam() {
 }
 
 function bindModalEvents(modalRoot: HTMLElement) {
-  modalRoot.querySelectorAll<HTMLButtonElement>('[data-auth-mode]').forEach((button) => {
-    button.addEventListener('click', () => {
-      authMode = button.dataset.authMode as AuthMode;
-      render();
-    });
+  modalRoot.querySelector<HTMLFormElement>('[data-phone-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void handleSendPhoneOtp(event.currentTarget as HTMLFormElement);
+  });
+
+  modalRoot.querySelector<HTMLFormElement>('[data-otp-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void handleVerifyPhoneOtp(event.currentTarget as HTMLFormElement);
+  });
+
+  modalRoot.querySelector<HTMLButtonElement>('[data-change-phone]')?.addEventListener('click', () => {
+    authStep = 'phone';
+    authErrorMessage = '';
+    authFormOtp = '';
+    pendingAuthPhone = '';
+    render();
   });
 
   modalRoot.querySelector<HTMLElement>('[data-close-auth]')?.addEventListener('click', (event) => {
@@ -582,12 +660,11 @@ function bindModalEvents(modalRoot: HTMLElement) {
     event.stopPropagation();
   });
 
-  modalRoot.querySelector<HTMLFormElement>('[data-auth-form]')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    void handleAuthSubmit(event.currentTarget as HTMLFormElement);
-  });
-
-  modalRoot.querySelector<HTMLInputElement>('input[name="email"]')?.focus();
+  if (authStep === 'phone') {
+    modalRoot.querySelector<HTMLInputElement>('input[name="phone"]')?.focus();
+  } else {
+    modalRoot.querySelector<HTMLInputElement>('input[name="otp"]')?.focus();
+  }
 }
 
 function bindEvents(root: HTMLElement) {
