@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -5,7 +6,25 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputPath = path.join(projectRoot, 'dist', 'public', 'config.js');
 const distIndexPath = path.join(projectRoot, 'dist', 'index.html');
-const buildId = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+function getBuildId() {
+  try {
+    const hash = execSync('git rev-parse --short HEAD', {
+      cwd: projectRoot,
+      encoding: 'utf8'
+    }).trim();
+
+    if (hash) {
+      return hash;
+    }
+  } catch {
+    // Jenkins checkouts may not always have git in PATH.
+  }
+
+  return Date.now().toString(36);
+}
+
+const buildId = getBuildId();
 
 function loadDotEnv(filePath) {
   if (!fs.existsSync(filePath)) {
