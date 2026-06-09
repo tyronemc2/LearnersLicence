@@ -13,24 +13,59 @@ export interface RuntimeSupabaseConfig {
   anonKey: string;
 }
 
+export interface ExamQuestion {
+  id: string;
+  position: number;
+  officialDomain: 'rules' | 'signs' | 'controls';
+  stem: string;
+  options: Array<{ id: string; label: string; body: string }>;
+}
+
+export interface StartFullMockResponse {
+  attemptId: string;
+  licenceFamily: string;
+  startedAt: string;
+  durationSeconds: number;
+  questions: ExamQuestion[];
+}
+
+export interface SubmitAttemptResponse {
+  attemptId: string;
+  passedSimulated: boolean;
+  overallReadiness: number;
+  sections: Record<'rules' | 'signs' | 'controls', {
+    correct: number;
+    total: number;
+    passMark: number;
+    passed: boolean;
+  }>;
+}
+
 type InvokeOptions = {
   body?: unknown;
   token?: string;
 };
 
-const SUPABASE_URL = 'https://YOUR_PROJECT_REF.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
+declare global {
+  interface Window {
+    __SUPABASE_CONFIG__?: RuntimeSupabaseConfig;
+  }
+}
+
+const DEFAULT_SUPABASE_URL = 'https://YOUR_PROJECT_REF.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 const SESSION_STORAGE_KEY = 'learners.supabase.session';
 
 function getConfig(): RuntimeSupabaseConfig | null {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || SUPABASE_URL.includes('YOUR_PROJECT_REF')) {
+  const runtime = typeof window !== 'undefined' ? window.__SUPABASE_CONFIG__ : undefined;
+  const url = runtime?.url ?? DEFAULT_SUPABASE_URL;
+  const anonKey = runtime?.anonKey ?? DEFAULT_SUPABASE_ANON_KEY;
+
+  if (!url || !anonKey || url.includes('YOUR_PROJECT_REF') || anonKey.includes('YOUR_SUPABASE_ANON_KEY')) {
     return null;
   }
 
-  return {
-    url: SUPABASE_URL,
-    anonKey: SUPABASE_ANON_KEY
-  };
+  return { url, anonKey };
 }
 
 function getStoredSession(): SupabaseSession | null {
@@ -111,8 +146,28 @@ export const supabaseRuntime = {
       body: JSON.stringify({ email, password })
     });
 
+    if (!session.access_token) {
+      throw new Error('Sign in failed. Check your email and password.');
+    }
+
     storeSession(session);
     return session;
+  },
+
+  async startFullMock(licenceFamily: string) {
+    return this.invoke<StartFullMockResponse>('start-full-mock', {
+      body: { licenceFamily }
+    });
+  },
+
+  async submitAttempt(attemptId: string, answers: Array<{
+    questionId: string;
+    selectedOption: 'a' | 'b' | 'c';
+    flagged?: boolean;
+  }>) {
+    return this.invoke<SubmitAttemptResponse>('submit-attempt', {
+      body: { attemptId, answers }
+    });
   },
 
   async signOut() {

@@ -1,5 +1,17 @@
 import { licenceFamilies } from './data/licenceFamilies.js';
-import { buildProgressSummary, DrivingCodeFamily, OfficialDomain, OFFICIAL_PRACTICE_RULE_SET, scoreAttempt } from './domain/licence.js';
+import {
+  buildProgressSummary,
+  DrivingCodeFamily,
+  OfficialDomain,
+  OFFICIAL_PRACTICE_RULE_SET,
+  scoreAttempt
+} from './domain/licence.js';
+import {
+  ExamQuestion,
+  StartFullMockResponse,
+  SubmitAttemptResponse,
+  supabaseRuntime
+} from './lib/supabaseClient.js';
 
 const sectionLabels: Record<OfficialDomain, string> = {
   rules: 'Rules of the road',
@@ -43,11 +55,22 @@ const sampleQuestions = [
   }
 ];
 
+type AppView = 'home' | 'exam';
+type AuthMode = 'signin' | 'signup';
+
 let selectedFamily: DrivingCodeFamily = 'B';
 let currentQuestionIndex = 0;
 const answersByQuestionId: Record<string, string | undefined> = {};
 const flaggedQuestionIds = new Set<string>();
 let statusMessage = 'Choose a code family, then start a full mock or weak-area drill.';
+let appView: AppView = 'home';
+let showAuthModal = false;
+let authMode: AuthMode = 'signin';
+let isLoading = false;
+let activeAttempt: StartFullMockResponse | null = null;
+let examQuestions: ExamQuestion[] = [];
+let submitResult: SubmitAttemptResponse | null = null;
+let examEndsAt: number | null = null;
 
 function escapeHtml(value: string) {
   return value.replace(/[&<>'"]/g, (char) => ({
@@ -59,6 +82,30 @@ function escapeHtml(value: string) {
   })[char] ?? char);
 }
 
+function getSignedInEmail() {
+  return supabaseRuntime.getSession()?.user?.email ?? null;
+}
+
+function formatRemainingTime() {
+  if (!examEndsAt) return '60 min · 68 questions';
+
+  const remainingSeconds = Math.max(0, Math.floor((examEndsAt - Date.now()) / 1000));
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = remainingSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')} remaining`;
+}
+
+function resetExamState() {
+  activeAttempt = null;
+  examQuestions = [];
+  submitResult = null;
+  examEndsAt = null;
+  currentQuestionIndex = 0;
+  Object.keys(answersByQuestionId).forEach((key) => delete answersByQuestionId[key]);
+  flaggedQuestionIds.clear();
+  appView = 'home';
+}
+
 function renderFamilySelector() {
   return licenceFamilies.map((family) => `
     <button
@@ -66,6 +113,7 @@ function renderFamilySelector() {
       type="button"
       data-family="${family.drivingCodeFamily}"
       aria-pressed="${family.drivingCodeFamily === selectedFamily}"
+      ${appView === 'exam' ? 'disabled' : ''}
     >
       <span>${family.drivingCodeFamily}</span>
       <strong>${escapeHtml(family.displayName)}</strong>
@@ -108,6 +156,8 @@ function renderDashboard() {
     </article>
   `).join('');
 
+  const signedInEmail = getSignedInEmail();
+
   return `
     <section class="panel dashboard" aria-labelledby="dashboard-title">
       <div class="section-heading">
@@ -115,13 +165,23 @@ function renderDashboard() {
         <h2 id="dashboard-title">Readiness dashboard</h2>
         <p>Your overall readiness is the lowest of the three section readiness scores, matching the official-style sectional pass condition.</p>
       </div>
+      ${signedInEmail ? `
+        <p class="signed-in" aria-live="polite">
+          Signed in as <strong>${escapeHtml(signedInEmail)}</strong>
+          <button type="button" class="link-button" data-sign-out>Sign out</button>
+        </p>
+      ` : `
+        <p class="signed-out">Sign in to save your full mock attempts and track progress.</p>
+      `}
       <div class="readiness-score" aria-label="Overall readiness ${summary.overallReadiness}%">
         <span>${summary.overallReadiness}%</span>
         <small>overall readiness</small>
       </div>
       <div class="readiness-grid">${sections}</div>
       <div class="actions" aria-label="Practice actions">
-        <button type="button" data-full-mock>Start full mock</button>
+        <button type="button" data-full-mock ${isLoading ? 'disabled' : ''}>
+          ${isLoading ? 'Starting full mock…' : 'Start full mock'}
+        </button>
         <button type="button" class="secondary" data-drill="${summary.weakTopics[0]?.slug ?? ''}">Do a weak-area drill</button>
       </div>
       <section class="weak-areas" aria-labelledby="weak-areas-title">
@@ -169,7 +229,79 @@ function getDemoScore() {
   });
 }
 
-function renderRunner() {
+function renderExamRunner() {
+  if (appView !== 'exam' || examQuestions.length === 0) {
+    return '';
+  }
+
+  const current = examQuestions[currentQuestionIndex];
+  const answeredCount = examQuestions.filter((question) => answersByQuestionId[question.id]).length;
+  const options = current.options.map((option) => `
+    <button
+      class="answer ${answersByQuestionId[current.id] === option.id ? 'selected' : ''}"
+      type="button"
+      data-answer="${option.id}"
+      aria-pressed="${answersByQuestionId[current.id] === option.id}"
+    >
+      <strong>${option.label}</strong>
+      <span>${escapeHtml(option.body)}</span>
+    </button>
+  `).join('');
+
+  const resultMarkup = submitResult ? `
+    <div class="simulated-result ${submitResult.passedSimulated ? 'passed' : 'failed'}" aria-live="polite">
+      <strong>${submitResult.passedSimulated ? 'Simulated pass' : 'Keep practising'}</strong>
+      <span>Readiness: ${submitResult.overallReadiness}% · Rules ${submitResult.sections.rules.correct}/${submitResult.sections.rules.total} · Signs ${submitResult.sections.signs.correct}/${submitResult.sections.signs.total} · Controls ${submitResult.sections.controls.correct}/${submitResult.sections.controls.total}</span>
+    </div>
+  ` : `
+    <div class="simulated-result" aria-live="polite">
+      <strong>${answeredCount} of ${examQuestions.length} answered</strong>
+      <span>Answer every question before submitting.</span>
+    </div>
+  `;
+
+  return `
+    <section class="panel runner exam-runner" aria-labelledby="runner-title">
+      <div class="attempt-header">
+        <div>
+          <p class="eyebrow">Full mock exam</p>
+          <h2 id="runner-title">Code family ${escapeHtml(activeAttempt?.licenceFamily ?? selectedFamily)}</h2>
+        </div>
+        <div class="timer" aria-label="Exam timer">${formatRemainingTime()}</div>
+      </div>
+      <div class="quota-tracker" aria-label="Official question quotas">
+        <span>Rules 28 / pass 22</span>
+        <span>Signs 28 / pass 23</span>
+        <span>Controls 8 / pass 6</span>
+      </div>
+      <p class="question-progress">Question ${current.position} of ${examQuestions.length}</p>
+      <article class="question-card">
+        <span class="domain-badge">${current.officialDomain}</span>
+        <h3>${escapeHtml(current.stem)}</h3>
+        <div class="options" role="group" aria-label="Answer options">${options}</div>
+      </article>
+      <footer class="attempt-nav">
+        <button type="button" data-nav="previous" ${currentQuestionIndex === 0 ? 'disabled' : ''}>Previous</button>
+        <button type="button" data-flag>${flaggedQuestionIds.has(current.id) ? 'Unflag' : 'Flag'}</button>
+        <button type="button" data-nav="next" ${currentQuestionIndex >= examQuestions.length - 1 ? 'disabled' : ''}>Next</button>
+        ${submitResult ? `
+          <button type="button" data-exit-exam>Back to dashboard</button>
+        ` : `
+          <button type="button" data-submit-exam ${answeredCount < examQuestions.length || isLoading ? 'disabled' : ''}>
+            ${isLoading ? 'Submitting…' : 'Submit exam'}
+          </button>
+        `}
+      </footer>
+      ${resultMarkup}
+    </section>
+  `;
+}
+
+function renderSampleRunner() {
+  if (appView === 'exam') {
+    return '';
+  }
+
   const current = sampleQuestions[currentQuestionIndex];
   const score = getDemoScore();
   const options = current.options.map((option) => `
@@ -185,11 +317,11 @@ function renderRunner() {
   `).join('');
 
   return `
-    <section class="panel runner" aria-labelledby="runner-title">
+    <section class="panel runner" aria-labelledby="sample-runner-title">
       <div class="attempt-header">
         <div>
           <p class="eyebrow">Sample accessible runner</p>
-          <h2 id="runner-title">Official-practice structure</h2>
+          <h2 id="sample-runner-title">Official-practice structure</h2>
         </div>
         <div class="timer" aria-label="Practice mode duration">60 min · 68 questions</div>
       </div>
@@ -216,6 +348,40 @@ function renderRunner() {
   `;
 }
 
+function renderAuthModal() {
+  if (!showAuthModal) {
+    return '';
+  }
+
+  return `
+    <div class="modal-backdrop" data-close-auth>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+        <button type="button" class="modal-close" aria-label="Close sign-in dialog">×</button>
+        <p class="eyebrow">Full mock exam</p>
+        <h2 id="auth-title">${authMode === 'signin' ? 'Sign in to continue' : 'Create an account'}</h2>
+        <p>Sign in with your Supabase account to start a timed 68-question full mock for code family ${selectedFamily}.</p>
+        <div class="auth-tabs" role="tablist" aria-label="Authentication mode">
+          <button type="button" class="${authMode === 'signin' ? 'selected' : ''}" data-auth-mode="signin">Sign in</button>
+          <button type="button" class="${authMode === 'signup' ? 'selected' : ''}" data-auth-mode="signup">Sign up</button>
+        </div>
+        <form class="auth-form" data-auth-form>
+          <label>
+            Email
+            <input type="email" name="email" autocomplete="email" required />
+          </label>
+          <label>
+            Password
+            <input type="password" name="password" autocomplete="${authMode === 'signup' ? 'new-password' : 'current-password'}" minlength="6" required />
+          </label>
+          <button type="submit" ${isLoading ? 'disabled' : ''}>
+            ${isLoading ? 'Please wait…' : authMode === 'signin' ? 'Sign in and start mock' : 'Create account and start mock'}
+          </button>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
 function render() {
   const root = document.querySelector<HTMLDivElement>('#root');
   if (!root) return;
@@ -237,20 +403,145 @@ function render() {
       <aside class="disclaimer" aria-label="Legal disclaimer">
         <strong>Practice platform only.</strong> This app does not issue, book, invigilate or certify an official South African learner's licence test. Official applications and examinations remain with a driving licence testing centre.
       </aside>
-      <section class="panel" aria-labelledby="code-family-title">
-        <div class="section-heading">
-          <p class="eyebrow">Normalised South African categories</p>
-          <h2 id="code-family-title">Choose your learner code family</h2>
-        </div>
-        <div class="family-grid">${renderFamilySelector()}</div>
-      </section>
-      ${renderSelectedMetadata()}
-      ${renderDashboard()}
-      <p class="status" role="status">${escapeHtml(statusMessage)}</p>
-      ${renderRunner()}
+      ${appView === 'home' ? `
+        <section class="panel" aria-labelledby="code-family-title">
+          <div class="section-heading">
+            <p class="eyebrow">Normalised South African categories</p>
+            <h2 id="code-family-title">Choose your learner code family</h2>
+          </div>
+          <div class="family-grid">${renderFamilySelector()}</div>
+        </section>
+        ${renderSelectedMetadata()}
+        ${renderDashboard()}
+      ` : ''}
+      <p class="status ${statusMessage.toLowerCase().includes('error') || statusMessage.toLowerCase().includes('could not') ? 'error' : ''}" role="status">${escapeHtml(statusMessage)}</p>
+      ${renderExamRunner()}
+      ${renderSampleRunner()}
+      ${renderAuthModal()}
     </main>
   `;
 
+  bindEvents(root);
+}
+
+async function startFullMock() {
+  if (!supabaseRuntime.isConfigured()) {
+    statusMessage = 'Supabase is not configured. Set public/config.js with your project URL and anon key, then rebuild.';
+    render();
+    return;
+  }
+
+  if (!supabaseRuntime.getAccessToken()) {
+    showAuthModal = true;
+    authMode = 'signin';
+    statusMessage = 'Sign in to start your full mock exam.';
+    render();
+    return;
+  }
+
+  isLoading = true;
+  statusMessage = `Starting full mock for code family ${selectedFamily}…`;
+  render();
+
+  try {
+    const attempt = await supabaseRuntime.startFullMock(selectedFamily);
+    activeAttempt = attempt;
+    examQuestions = attempt.questions;
+    examEndsAt = Date.now() + attempt.durationSeconds * 1000;
+    currentQuestionIndex = 0;
+    submitResult = null;
+    appView = 'exam';
+    statusMessage = `Full mock started. ${attempt.questions.length} questions loaded.`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not start full mock.';
+    if (message.toLowerCase().includes('not authenticated') || message.toLowerCase().includes('sign in')) {
+      showAuthModal = true;
+      authMode = 'signin';
+      statusMessage = 'Your session expired. Sign in again to start the full mock.';
+    } else {
+      statusMessage = message;
+    }
+  } finally {
+    isLoading = false;
+    render();
+  }
+}
+
+async function handleAuthSubmit(form: HTMLFormElement) {
+  const email = (form.elements.namedItem('email') as HTMLInputElement).value.trim();
+  const password = (form.elements.namedItem('password') as HTMLInputElement).value;
+
+  if (!email || !password) {
+    statusMessage = 'Enter your email and password to continue.';
+    render();
+    return;
+  }
+
+  isLoading = true;
+  statusMessage = authMode === 'signin' ? 'Signing in…' : 'Creating your account…';
+  render();
+
+  try {
+    if (authMode === 'signup') {
+      const session = await supabaseRuntime.signUp(email, password);
+      if (!session.access_token) {
+        statusMessage = 'Account created. Check your email to confirm, then sign in.';
+        authMode = 'signin';
+        isLoading = false;
+        render();
+        return;
+      }
+    } else {
+      await supabaseRuntime.signIn(email, password);
+    }
+
+    showAuthModal = false;
+    isLoading = false;
+    await startFullMock();
+  } catch (error) {
+    isLoading = false;
+    statusMessage = error instanceof Error ? error.message : 'Authentication failed.';
+    render();
+  }
+}
+
+async function submitExam() {
+  if (!activeAttempt || examQuestions.length === 0 || submitResult) {
+    return;
+  }
+
+  const unanswered = examQuestions.filter((question) => !answersByQuestionId[question.id]);
+  if (unanswered.length > 0) {
+    statusMessage = `Answer all questions before submitting. ${unanswered.length} remaining.`;
+    render();
+    return;
+  }
+
+  isLoading = true;
+  statusMessage = 'Submitting your full mock attempt…';
+  render();
+
+  try {
+    submitResult = await supabaseRuntime.submitAttempt(
+      activeAttempt.attemptId,
+      examQuestions.map((question) => ({
+        questionId: question.id,
+        selectedOption: answersByQuestionId[question.id] as 'a' | 'b' | 'c',
+        flagged: flaggedQuestionIds.has(question.id)
+      }))
+    );
+    statusMessage = submitResult.passedSimulated
+      ? 'Full mock submitted. Simulated pass achieved.'
+      : 'Full mock submitted. Review your sectional scores below.';
+  } catch (error) {
+    statusMessage = error instanceof Error ? error.message : 'Could not submit your attempt.';
+  } finally {
+    isLoading = false;
+    render();
+  }
+}
+
+function bindEvents(root: HTMLElement) {
   root.querySelectorAll<HTMLButtonElement>('[data-family]').forEach((button) => {
     button.addEventListener('click', () => {
       selectedFamily = button.dataset.family as DrivingCodeFamily;
@@ -266,13 +557,61 @@ function render() {
   });
 
   root.querySelector<HTMLButtonElement>('[data-full-mock]')?.addEventListener('click', () => {
-    statusMessage = 'Full mock queued using the 28 / 28 / 8 section quotas.';
+    void startFullMock();
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-sign-out]')?.addEventListener('click', () => {
+    void supabaseRuntime.signOut().then(() => {
+      resetExamState();
+      statusMessage = 'Signed out.';
+      render();
+    });
+  });
+
+  root.querySelectorAll<HTMLButtonElement>('[data-auth-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      authMode = button.dataset.authMode as AuthMode;
+      render();
+    });
+  });
+
+  root.querySelector<HTMLElement>('[data-close-auth]')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) {
+      showAuthModal = false;
+      render();
+    }
+  });
+
+  root.querySelector<HTMLButtonElement>('.modal-close')?.addEventListener('click', () => {
+    showAuthModal = false;
     render();
   });
 
+  root.querySelector<HTMLElement>('.modal')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  root.querySelector<HTMLFormElement>('[data-auth-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void handleAuthSubmit(event.currentTarget as HTMLFormElement);
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-submit-exam]')?.addEventListener('click', () => {
+    void submitExam();
+  });
+
+  root.querySelector<HTMLButtonElement>('[data-exit-exam]')?.addEventListener('click', () => {
+    resetExamState();
+    statusMessage = 'Returned to the dashboard.';
+    render();
+  });
+
+  const activeQuestions = appView === 'exam' ? examQuestions : sampleQuestions;
+
   root.querySelectorAll<HTMLButtonElement>('[data-answer]').forEach((button) => {
     button.addEventListener('click', () => {
-      answersByQuestionId[sampleQuestions[currentQuestionIndex].id] = button.dataset.answer;
+      const question = activeQuestions[currentQuestionIndex];
+      answersByQuestionId[question.id] = button.dataset.answer;
       render();
     });
   });
@@ -283,12 +622,12 @@ function render() {
   });
 
   root.querySelector<HTMLButtonElement>('[data-nav="next"]')?.addEventListener('click', () => {
-    currentQuestionIndex = Math.min(sampleQuestions.length - 1, currentQuestionIndex + 1);
+    currentQuestionIndex = Math.min(activeQuestions.length - 1, currentQuestionIndex + 1);
     render();
   });
 
   root.querySelector<HTMLButtonElement>('[data-flag]')?.addEventListener('click', () => {
-    const questionId = sampleQuestions[currentQuestionIndex].id;
+    const questionId = activeQuestions[currentQuestionIndex].id;
     if (flaggedQuestionIds.has(questionId)) {
       flaggedQuestionIds.delete(questionId);
     } else {
@@ -298,4 +637,27 @@ function render() {
   });
 }
 
+let timerHandle: number | undefined;
+
+function startExamTimer() {
+  if (timerHandle) {
+    window.clearInterval(timerHandle);
+  }
+
+  timerHandle = window.setInterval(() => {
+    if (appView === 'exam' && examEndsAt && !submitResult) {
+      const timer = document.querySelector('.exam-runner .timer');
+      if (timer) {
+        timer.textContent = formatRemainingTime();
+      }
+
+      if (examEndsAt <= Date.now()) {
+        statusMessage = 'Time is up. Submit your answers when ready.';
+        render();
+      }
+    }
+  }, 1000);
+}
+
 render();
+startExamTimer();
