@@ -115,6 +115,39 @@ function stampBuildId() {
   console.log(`Stamped build id ${buildId} into dist/index.html`);
 }
 
+function stampModuleImports() {
+  const distDir = path.join(projectRoot, 'dist');
+
+  function stampImportsInFile(filePath) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const updated = content.replace(/from '(\.\.?\/[^'?]+\.js)'/g, (match, importPath) => {
+      return `from '${importPath}?v=${buildId}'`;
+    });
+
+    if (updated !== content) {
+      fs.writeFileSync(filePath, updated);
+    }
+  }
+
+  function walk(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.name.endsWith('.js')) {
+        stampImportsInFile(fullPath);
+      }
+    }
+  }
+
+  if (!fs.existsSync(distDir)) {
+    return;
+  }
+
+  walk(distDir);
+  console.log(`Stamped module import cache keys with build id ${buildId}`);
+}
+
 const resolved = await resolveConfig();
 
 if (typeof resolved === 'string') {
@@ -133,3 +166,4 @@ if (typeof resolved === 'string') {
 }
 
 stampBuildId();
+stampModuleImports();
