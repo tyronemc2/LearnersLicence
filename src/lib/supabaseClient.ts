@@ -3,7 +3,7 @@ export interface SupabaseSession {
   refresh_token?: string;
   expires_at?: number;
   user?: {
-    id: string;
+    id?: string;
     email?: string;
     phone?: string;
   };
@@ -225,7 +225,10 @@ export const supabaseRuntime = {
 
     storeSession({
       ...session,
-      user: session.user ?? { phone: normalizedPhone }
+      user: {
+        ...session.user,
+        phone: session.user?.phone ?? normalizedPhone
+      }
     });
 
     return session;
