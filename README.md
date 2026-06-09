@@ -5,7 +5,7 @@ A mobile-first TypeScript PWA starter for a South African learner's licence **pr
 ## What is included
 
 - Normalised learner metadata for LL1 learner classes `1`, `2`, and `3` and user-facing driving code families (`A1`, `A`, `B`, `EB`, `C1`, `C`, `EC1`, `EC`).
-- Official-practice scoring metadata for a 68-question, 1-hour mock with sectional pass marks of 22/28 rules, 23/28 signs, and 6/8 controls.
+- Official-practice scoring metadata for a 64-question, 1-hour mock (28 rules + 28 signs + 8 controls) with sectional pass marks of 22/28, 23/28, and 6/8.
 - Readiness logic that uses the weakest sectional readiness score rather than a misleading aggregate percentage.
 - A responsive UI with a legal disclaimer, code-family selector, readiness dashboard, weak-area queue, and accessible sample test runner.
 - Unit tests for the scoring model, readiness formula, mastery calculation, and remediation priority helper.

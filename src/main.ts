@@ -93,7 +93,7 @@ function getSignedInPhone() {
 }
 
 function formatRemainingTime() {
-  if (!examEndsAt) return '60 min · 68 questions';
+  if (!examEndsAt) return '60 min · 64 questions';
 
   const remainingSeconds = Math.max(0, Math.floor((examEndsAt - Date.now()) / 1000));
   const minutes = Math.floor(remainingSeconds / 60);
@@ -332,7 +332,7 @@ function renderSampleRunner() {
           <p class="eyebrow">Sample accessible runner</p>
           <h2 id="sample-runner-title">Official-practice structure</h2>
         </div>
-        <div class="timer" aria-label="Practice mode duration">60 min · 68 questions</div>
+        <div class="timer" aria-label="Practice mode duration">60 min · 64 questions</div>
       </div>
       <div class="quota-tracker" aria-label="Official question quotas">
         <span>Rules 28 / pass 22</span>
@@ -390,7 +390,7 @@ function renderAuthModalLayer() {
         <p class="eyebrow">Full mock exam</p>
         <h2 id="auth-title">${phoneStep ? 'Sign in with your mobile' : 'Enter SMS code'}</h2>
         <p>${phoneStep
-    ? `We'll send a one-time code to your mobile number to start the timed 68-question mock for code family ${selectedFamily}.`
+    ? `We'll send a one-time code to your mobile number to start the timed 64-question mock for code family ${selectedFamily}.`
     : `Enter the 6-digit code sent to ${escapeHtml(displayPhone)}.`}</p>
         ${authErrorMessage ? `<p class="auth-error" role="alert">${escapeHtml(authErrorMessage)}</p>` : ''}
         ${phoneStep ? `
@@ -456,7 +456,7 @@ function render() {
         </div>
         <div class="hero-card" aria-label="Official practice mode summary">
           <strong>Official practice mode</strong>
-          <span>68 questions · 1 hour</span>
+          <span>64 questions · 1 hour</span>
           <span>22/28 rules · 23/28 signs · 6/8 controls</span>
         </div>
       </section>
@@ -590,7 +590,7 @@ async function handleVerifyPhoneOtp(form: HTMLFormElement) {
 }
 
 async function submitExam() {
-  if (!activeAttempt || examQuestions.length === 0 || submitResult) {
+  if (!activeAttempt || examQuestions.length === 0 || submitResult || isLoading) {
     return;
   }
 

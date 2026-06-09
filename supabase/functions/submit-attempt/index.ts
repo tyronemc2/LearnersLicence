@@ -101,8 +101,12 @@ Deno.serve(async (req) => {
     allowedQuestionIds.has(answer.questionId) && ['a', 'b', 'c'].includes(answer.selectedOption)
   );
 
-  if (cleanAnswers.length !== 68) {
-    return jsonResponse({ error: `Full mock requires 68 answers. Received ${cleanAnswers.length}.` }, 400);
+  const requiredAnswers = attemptQuestions.length;
+
+  if (cleanAnswers.length !== requiredAnswers) {
+    return jsonResponse({
+      error: `Full mock requires ${requiredAnswers} answers. Received ${cleanAnswers.length}.`
+    }, 400);
   }
 
   const scoreByDomain: Record<OfficialDomain, number> = {
