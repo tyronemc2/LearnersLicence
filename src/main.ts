@@ -171,7 +171,10 @@ function renderDashboard() {
           <button type="button" class="link-button" data-sign-out>Sign out</button>
         </p>
       ` : `
-        <p class="signed-out">Sign in to save your full mock attempts and track progress.</p>
+        <p class="signed-out">
+          Sign in to save your full mock attempts and track progress.
+          <button type="button" class="link-button" data-open-auth>Sign in</button>
+        </p>
       `}
       <div class="readiness-score" aria-label="Overall readiness ${summary.overallReadiness}%">
         <span>${summary.overallReadiness}%</span>
@@ -348,12 +351,27 @@ function renderSampleRunner() {
   `;
 }
 
-function renderAuthModal() {
-  if (!showAuthModal) {
-    return '';
+function openAuthModal() {
+  showAuthModal = true;
+  authMode = 'signin';
+  statusMessage = 'Sign in to start your full mock exam.';
+  render();
+}
+
+function renderAuthModalLayer() {
+  const modalRoot = document.getElementById('auth-modal-root');
+  if (!modalRoot) {
+    return;
   }
 
-  return `
+  document.body.style.overflow = showAuthModal ? 'hidden' : '';
+
+  if (!showAuthModal) {
+    modalRoot.innerHTML = '';
+    return;
+  }
+
+  modalRoot.innerHTML = `
     <div class="modal-backdrop" data-close-auth>
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
         <button type="button" class="modal-close" aria-label="Close sign-in dialog">×</button>
@@ -380,6 +398,8 @@ function renderAuthModal() {
       </section>
     </div>
   `;
+
+  bindModalEvents(modalRoot);
 }
 
 function render() {
@@ -417,25 +437,22 @@ function render() {
       <p class="status ${statusMessage.toLowerCase().includes('error') || statusMessage.toLowerCase().includes('could not') ? 'error' : ''}" role="status">${escapeHtml(statusMessage)}</p>
       ${renderExamRunner()}
       ${renderSampleRunner()}
-      ${renderAuthModal()}
     </main>
   `;
 
   bindEvents(root);
+  renderAuthModalLayer();
 }
 
 async function startFullMock() {
   if (!supabaseRuntime.isConfigured()) {
-    statusMessage = 'Supabase is not configured. Set public/config.js with your project URL and anon key, then rebuild.';
+    statusMessage = 'Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env on the server, then run npm run build.';
     render();
     return;
   }
 
   if (!supabaseRuntime.getAccessToken()) {
-    showAuthModal = true;
-    authMode = 'signin';
-    statusMessage = 'Sign in to start your full mock exam.';
-    render();
+    openAuthModal();
     return;
   }
 
@@ -541,6 +558,38 @@ async function submitExam() {
   }
 }
 
+function bindModalEvents(modalRoot: HTMLElement) {
+  modalRoot.querySelectorAll<HTMLButtonElement>('[data-auth-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      authMode = button.dataset.authMode as AuthMode;
+      render();
+    });
+  });
+
+  modalRoot.querySelector<HTMLElement>('[data-close-auth]')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) {
+      showAuthModal = false;
+      render();
+    }
+  });
+
+  modalRoot.querySelector<HTMLButtonElement>('.modal-close')?.addEventListener('click', () => {
+    showAuthModal = false;
+    render();
+  });
+
+  modalRoot.querySelector<HTMLElement>('.modal')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  modalRoot.querySelector<HTMLFormElement>('[data-auth-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void handleAuthSubmit(event.currentTarget as HTMLFormElement);
+  });
+
+  modalRoot.querySelector<HTMLInputElement>('input[name="email"]')?.focus();
+}
+
 function bindEvents(root: HTMLElement) {
   root.querySelectorAll<HTMLButtonElement>('[data-family]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -560,40 +609,21 @@ function bindEvents(root: HTMLElement) {
     void startFullMock();
   });
 
+  root.querySelector<HTMLButtonElement>('[data-open-auth]')?.addEventListener('click', () => {
+    if (!supabaseRuntime.isConfigured()) {
+      statusMessage = 'Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env on the server, then run npm run build.';
+      render();
+      return;
+    }
+    openAuthModal();
+  });
+
   root.querySelector<HTMLButtonElement>('[data-sign-out]')?.addEventListener('click', () => {
     void supabaseRuntime.signOut().then(() => {
       resetExamState();
       statusMessage = 'Signed out.';
       render();
     });
-  });
-
-  root.querySelectorAll<HTMLButtonElement>('[data-auth-mode]').forEach((button) => {
-    button.addEventListener('click', () => {
-      authMode = button.dataset.authMode as AuthMode;
-      render();
-    });
-  });
-
-  root.querySelector<HTMLElement>('[data-close-auth]')?.addEventListener('click', (event) => {
-    if (event.target === event.currentTarget) {
-      showAuthModal = false;
-      render();
-    }
-  });
-
-  root.querySelector<HTMLButtonElement>('.modal-close')?.addEventListener('click', () => {
-    showAuthModal = false;
-    render();
-  });
-
-  root.querySelector<HTMLElement>('.modal')?.addEventListener('click', (event) => {
-    event.stopPropagation();
-  });
-
-  root.querySelector<HTMLFormElement>('[data-auth-form]')?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    void handleAuthSubmit(event.currentTarget as HTMLFormElement);
   });
 
   root.querySelector<HTMLButtonElement>('[data-submit-exam]')?.addEventListener('click', () => {

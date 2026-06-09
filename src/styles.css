@@ -237,6 +237,17 @@ button { cursor: pointer; }
   text-decoration: underline;
 }
 
+#auth-modal-root {
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 1000;
+}
+
+#auth-modal-root:not(:empty) {
+  pointer-events: auto;
+}
+
 .modal-backdrop {
   align-items: center;
   background: rgb(15 23 42 / 55%);
@@ -245,7 +256,7 @@ button { cursor: pointer; }
   justify-content: center;
   padding: 1rem;
   position: fixed;
-  z-index: 20;
+  z-index: 1000;
 }
 
 .modal {

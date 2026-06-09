@@ -1,0 +1,6 @@
+// Copy to public/config.local.js on the server (gitignored).
+// Get values from Supabase: Project Settings → API → Project URL and anon public key.
+window.__SUPABASE_CONFIG__ = {
+  url: 'https://YOUR_PROJECT_REF.supabase.co',
+  anonKey: 'YOUR_SUPABASE_ANON_KEY'
+};

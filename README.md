@@ -20,7 +20,29 @@ npm run build
 
 ## Deploying (e.g. ll.scanme.site)
 
-This project uses **nginx**, not Apache — `.htaccess` has no effect. Built files live in `dist/` (gitignored). After each deploy:
+This project uses **nginx**, not Apache — `.htaccess` has no effect. Built files live in `dist/` (gitignored).
+
+### Supabase config (required for full mock)
+
+Get your **Project URL** and **anon public key** from [Supabase](https://app.supabase.com) → your project → **Settings** → **API**.
+
+On the server, create a `.env` file in the project root (gitignored):
+
+```bash
+cp .env.example .env
+# edit .env with your real values
+```
+
+```env
+VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-or-publishable-key
+```
+
+`npm run build` reads `.env` and writes `dist/public/config.js` automatically.
+
+Alternative: create `public/config.local.js` from `public/config.local.js.example`.
+
+After each deploy:
 
 ```bash
 cd /data/www/ll.scanme.site
@@ -38,6 +60,52 @@ index index.html;
 See `deploy/nginx.conf.example` for a full server block. If `root` stays on the repo checkout, use `try_files /dist$uri /dist$uri/ /dist/index.html;` instead.
 
 If assets still 404, confirm `dist/main.js` and `dist/styles.css` exist and reload nginx after config changes (`nginx -t && systemctl reload nginx`).
+
+## Seeding the question bank
+
+Full mocks need at least **28 rules**, **28 signs**, and **8 controls** questions per licence family (e.g. code **B**).
+
+The repo includes an original practice question bank in `supabase/seed/question-bank.mjs`. It is **not** an official government paper — review and expand it before production use.
+
+### 1. Add your service role key to `.env`
+
+From Supabase → **Settings** → **API** → **service_role** key (keep this secret):
+
+```env
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+### 2. Run the seed script
+
+```bash
+npm run seed
+```
+
+This inserts questions for all eight licence families (A1, A, B, EB, C1, C, EC1, EC). The script refuses to run if the `questions` table already has rows.
+
+### 3. Reseeding from scratch
+
+If you need to start over, run this in the Supabase SQL editor:
+
+```sql
+truncate table public.attempt_answers, public.attempt_questions, public.attempts, public.questions cascade;
+```
+
+Then run `npm run seed` again.
+
+### Adding your own questions
+
+Edit `supabase/seed/question-bank.mjs` or import from CSV later. Each row needs:
+
+| Field | Example |
+|-------|---------|
+| `official_domain` | `rules`, `signs`, or `controls` |
+| `topic_slug` | `roundabouts` |
+| `stem` | Question text |
+| `option_a` / `option_b` / `option_c` | Three answer options |
+| `correct_option` | `a`, `b`, or `c` |
+| `learner_class` | `1`, `2`, or `3` (set automatically per bank) |
+| `licence_family` | Set automatically from learner class |
 
 ## Product guardrails
 
